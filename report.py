@@ -10,34 +10,35 @@ from gql.transport.aiohttp import AIOHTTPTransport
 
 
 VIEWER_SPONSORSHIP_LOG = gql("""
-query getViewerSponsorshipLog($after: String) {
-    viewer {
-        login
-        sponsorsActivities(first: 100, after: $after, period: ALL, includeAsSponsor: true) {
-            nodes {
-                action
-                paymentSource
-                previousSponsorsTier {
-                    monthlyPriceInCents
-                    isOneTime
-                }
-                sponsorsTier {
-                    monthlyPriceInCents
-                    isOneTime
-                }
-                timestamp
-                sponsorable {
-                    ... on User {
-                        login
+query getViewerSponsorshipLog($target: String!, $after: String) {
+    repositoryOwner(login: $target) {
+        ... on Sponsorable {
+            sponsorsActivities(first: 100, after: $after, period: ALL, includeAsSponsor: true) {
+                nodes {
+                    action
+                    paymentSource
+                    previousSponsorsTier {
+                        monthlyPriceInCents
+                        isOneTime
                     }
-                    ... on Organization {
-                        login
+                    sponsorsTier {
+                        monthlyPriceInCents
+                        isOneTime
+                    }
+                    timestamp
+                    sponsorable {
+                        ... on User {
+                            login
+                        }
+                        ... on Organization {
+                            login
+                        }
                     }
                 }
-            }
-            pageInfo {
-                endCursor
-                hasNextPage
+                pageInfo {
+                    endCursor
+                    hasNextPage
+                }
             }
         }
     }
@@ -62,41 +63,39 @@ def get_gql_client(token):
 
 
 """
-Gets a log of all sponsorship events by the current user.
+Gets a log of all sponsorship events by the user or organization with login
+`target`.
 """
-def get_viewer_sponsorship_log(client):
-    viewer_login = None
+def get_sponsorship_log(client, target):
     events = []
 
     after = None
     while True:
         page_results = client.execute(VIEWER_SPONSORSHIP_LOG,
-            variable_values={'after': after})
-        viewer_login = page_results['viewer']['login']
-        events.extend(page_results['viewer']['sponsorsActivities']['nodes'])
-        after = page_results['viewer']['sponsorsActivities']['pageInfo']['endCursor']
-        if not page_results['viewer']['sponsorsActivities']['pageInfo']['hasNextPage']:
+            variable_values={'target': target, 'after': after})
+        events.extend(page_results['repositoryOwner']['sponsorsActivities']['nodes'])
+        after = page_results['repositoryOwner']['sponsorsActivities']['pageInfo']['endCursor']
+        if not page_results['repositoryOwner']['sponsorsActivities']['pageInfo']['hasNextPage']:
             break
 
-    return {
-        'viewer_login': viewer_login,
-        'events': events,
-    }
+    return events
 
 
 def main():
     parser = argparse.ArgumentParser("osp-github-reporter")
-    parser.add_argument("token",
-        nargs=1,
-        help="The organization to start the search from",
-        type=str)
+    parser.add_argument("--target",
+        help="The user or organization to get the report for",
+        type=str,
+        required=True)
+    parser.add_argument("--token",
+        help="Your GitHub personal access token (classic)",
+        type=str,
+        required=True)
     args = parser.parse_args()
-    token = args.token[0]
 
-    client = get_gql_client(token)
-    log = get_viewer_sponsorship_log(client)
-    print(log['viewer_login'])
-    pprint(log['events'])
+    client = get_gql_client(args.token)
+    events = get_sponsorship_log(client, args.target)
+    pprint(events)
 
 
 if __name__ == '__main__':
