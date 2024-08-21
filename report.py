@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+# © 2024 Vlad-Stefan Harbuz <vlad@vladh.net>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import argparse
 import os
 import sys
