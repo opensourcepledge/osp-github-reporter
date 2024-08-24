@@ -13,6 +13,11 @@ inaccuracies to arise. [Let us know](mailto:vlad@vladh.net) if they do, and we'l
 2. Decide with user or organization you want to get reports for.
 3. Run `report.py`: `./report.py --target myuser --token ghp_accesstokengoeshere`
 
+## Caveats
+
+Refunds are not documented in GitHub's API, so we weren't able to test those. Would you let us know if you run into any
+problems with refunds? They should be listed as payments with negative amounts on the export.
+
 ## Technical Notes
 
 GitHub's `totalSponsorshipAmountAsSponsorInCents` is broken and should not be used. This is because, if, in a particular
