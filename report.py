@@ -180,13 +180,9 @@ def reconstruct_payments(events, start_date, end_date):
         for event in todays_events:
             login = event['sponsorable']['login']
             match event['action']:
-                case 'CANCELLED_SPONSORSHIP':
-                    remove_sponsorship(login)
                 case 'PENDING_CHANGE':
-                    # We don't do anything here because presumably the pending
-                    # change will create its own event at the time it is
-                    # scheduled for.
-                    # TODO: Confirm this.
+                    # We don't need to do anything here because we can process
+                    # the scheduled event when it actually occurs.
                     pass
                 case 'SPONSOR_MATCH_DISABLED':
                     # We're ignoring this because I haven't found any
@@ -194,6 +190,8 @@ def reconstruct_payments(events, start_date, end_date):
                     # used. Could be the “GitHub Sponsors Matching Fund”, which
                     # doesn't exist anymore.
                     pass
+                case 'CANCELLED_SPONSORSHIP':
+                    remove_sponsorship(login)
                 case 'TIER_CHANGE':
                     monthly_price_in_cents = event['sponsorsTier']['monthlyPriceInCents']
                     is_one_time = event['sponsorsTier']['isOneTime']
