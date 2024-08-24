@@ -4,14 +4,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from collections import defaultdict
+from dataclasses import dataclass
+from pprint import pprint
 import argparse
 import os
 import sys
-from pprint import pprint
 
-import arrow
 from gql import gql, Client
 from gql.transport.aiohttp import AIOHTTPTransport
+import arrow
 
 
 TOTAL_SPONSORSHIP_AMOUNT_QUERY = gql("""
@@ -25,10 +27,10 @@ query getTotalSponsorshipAmount($target: String!, $until: DateTime) {
 """)
 
 SPONSORSHIP_LOG_QUERY = gql("""
-query getSponsorshipLog($target: String!, $after: String) {
+query getSponsorshipLog($target: String!, $after: String, $since: DateTime) {
     repositoryOwner(login: $target) {
         ... on Sponsorable {
-            sponsorsActivities(first: 100, after: $after, period: ALL, includeAsSponsor: true) {
+            sponsorsActivities(first: 100, after: $after, since: $since, period: ALL, includeAsSponsor: true) {
                 nodes {
                     action
                     paymentSource
@@ -61,6 +63,13 @@ query getSponsorshipLog($target: String!, $after: String) {
 """)
 
 
+@dataclass
+class Payment:
+    date: str
+    login: str
+    amount_in_cents: int
+
+
 """
 Prints to stderr.
 """
@@ -89,35 +98,6 @@ def get_total_sponsorship_amount(client, target, until):
 
 
 """
-Gets a log of all sponsorship events by the user or organization with login
-`target`.
-"""
-def get_sponsorship_log(client, target):
-    eprint(f"get_sponsorship_log(_, {target})")
-    events = []
-
-    after = None
-    while True:
-        page_results = client.execute(SPONSORSHIP_LOG_QUERY,
-            variable_values={'target': target, 'after': after})
-        events.extend(page_results['repositoryOwner']['sponsorsActivities']['nodes'])
-        after = page_results['repositoryOwner']['sponsorsActivities']['pageInfo']['endCursor']
-        if not page_results['repositoryOwner']['sponsorsActivities']['pageInfo']['hasNextPage']:
-            break
-
-    return events
-
-
-"""
-Takes a list of sponsorship events and returns a list of months into which the
-sponsorship amounts are discretized.
-"""
-def discretize_events(events):
-    # TODO
-    return []
-
-
-"""
 Gets the total sponsorship amount in US cents that `target` has donated,
 from a given `start_date` to a given `end_date`, grouped by month.
 """
@@ -142,6 +122,147 @@ def get_monthly_sponsorship_amounts(client, target, start_date, end_date):
     return month_totals
 
 
+"""
+Gets a log of all sponsorship events by the user or organization with login
+`target`.
+"""
+def get_sponsorship_log(client, target, start_date):
+    eprint(f"get_sponsorship_log(_, {target}, {start_date})")
+    events = []
+
+    after = None
+    while True:
+        page_results = client.execute(SPONSORSHIP_LOG_QUERY,
+            variable_values={'target': target, 'after': after, 'since': start_date.isoformat()})
+        events.extend(page_results['repositoryOwner']['sponsorsActivities']['nodes'])
+        after = page_results['repositoryOwner']['sponsorsActivities']['pageInfo']['endCursor']
+        if not page_results['repositoryOwner']['sponsorsActivities']['pageInfo']['hasNextPage']:
+            break
+
+    return events
+
+
+"""
+Groups events into a dict by the YYYY-MM-DD of their timestamp.
+"""
+def make_day_to_events_map(events):
+    day_to_events_map = defaultdict(list)
+    for event in events:
+        timestamp = arrow.get(event['timestamp'])
+        formatted_day = timestamp.format('YYYY-MM-DD')
+        day_to_events_map[formatted_day].append(event)
+    return day_to_events_map
+
+
+"""
+Given a list of events, reconstructs what payments to sponsorables the target
+user _would have_ made, based on a reconstructed version of GitHub's payment
+scheduling.
+"""
+def reconstruct_payments(events, start_date, end_date):
+    payments = []
+    payment_monthday = None
+    payment_login_to_amount_map = {}
+    day_to_events_map = make_day_to_events_map(events)
+
+    def remove_sponsorship(login):
+        nonlocal payment_monthday
+        del payment_login_to_amount_map[login]
+        if len(payment_login_to_amount_map) == 0:
+            payment_monthday = None
+
+    curr_date = start_date
+    while curr_date <= end_date:
+        formatted_day = curr_date.format('YYYY-MM-DD')
+        monthday = curr_date.day
+        todays_events = day_to_events_map[formatted_day]
+
+        for event in todays_events:
+            login = event['sponsorable']['login']
+            match event['action']:
+                case 'CANCELLED_SPONSORSHIP':
+                    remove_sponsorship(login)
+                case 'PENDING_CHANGE':
+                    # We don't do anything here because presumably the pending
+                    # change will create its own event at the time it is
+                    # scheduled for.
+                    # TODO: Confirm this.
+                    pass
+                case 'SPONSOR_MATCH_DISABLED':
+                    # We're ignoring this because I haven't found any
+                    # information on what sponsor matching means or how it is
+                    # used. Could be the “GitHub Sponsors Matching Fund”, which
+                    # doesn't exist anymore.
+                    pass
+                case 'TIER_CHANGE':
+                    monthly_price_in_cents = event['sponsorsTier']['monthlyPriceInCents']
+                    is_one_time = event['sponsorsTier']['isOneTime']
+                    if is_one_time:
+                        # NOTE: Here, we're assuming that a tier change _into_
+                        # a one-time tier is effectively a payment followed by
+                        # a cancellation of the sponsorship.
+                        remove_sponsorship(login)
+                        payments.append(Payment(
+                            date=formatted_day,
+                            login=login,
+                            amount_in_cents=monthly_price_in_cents,
+                        ))
+                    else:
+                        # NOTE: Here, we're assuming that, on tier change, the
+                        # next payment will be taken on the usual date, _not_
+                        # on the date of the tier change. We're assuming that
+                        # nothing but the _amount_ changes on tier change.
+                        payment_login_to_amount_map[login] = monthly_price_in_cents
+                case 'REFUND':
+                    # NOTE: This isn't tested because the exact behaviour is
+                    # undocumented by GitHub, but we're assuming that the
+                    # refund amount is a positive amount in
+                    # `monthly_price_in_cents`.
+                    monthly_price_in_cents = event['sponsorsTier']['monthlyPriceInCents']
+                    payments.append(Payment(
+                        date=formatted_day,
+                        login=login,
+                        amount_in_cents=(0 - monthly_price_in_cents),
+                    ))
+
+        if monthday == payment_monthday:
+            for login, monthly_price_in_cents in payment_login_to_amount_map.items():
+                payments.append(Payment(
+                    date=formatted_day,
+                    login=login,
+                    amount_in_cents=monthly_price_in_cents,
+                ))
+
+        for event in todays_events:
+            login = event['sponsorable']['login']
+            match event['action']:
+                case 'NEW_SPONSORSHIP':
+                    monthly_price_in_cents = event['sponsorsTier']['monthlyPriceInCents']
+                    is_one_time = event['sponsorsTier']['isOneTime']
+                    payments.append(Payment(
+                        date=formatted_day,
+                        login=login,
+                        amount_in_cents=monthly_price_in_cents,
+                    ))
+                    if not is_one_time:
+                        if payment_monthday is None:
+                            payment_monthday = monthday
+                        payment_login_to_amount_map[login] = monthly_price_in_cents
+
+        curr_date = curr_date.shift(days=+1)
+
+    return payments
+
+
+"""
+Print a list of payments as a CSV file.
+"""
+def print_payments_csv(payments):
+    print('Date,Sponsorable,Amount in US Cents')
+    for payment in payments:
+        print(f'{payment.date},{payment.login},{payment.amount_in_cents}')
+
+
 def main():
     parser = argparse.ArgumentParser("osp-github-reporter")
     parser.add_argument("--target",
@@ -156,15 +277,12 @@ def main():
 
     client = get_gql_client(args.token)
 
-    # events = get_sponsorship_log(client, args.target)
-    # disc_events = discretize_events(events)
-    # pprint(disc_events)
-
-    START_DATE = arrow.get('2021-01')
+    START_DATE = arrow.get('2021-08')
     END_DATE = arrow.get()
 
-    month_totals = get_monthly_sponsorship_amounts(client, args.target, START_DATE, END_DATE)
-    pprint(month_totals)
+    events = get_sponsorship_log(client, args.target, START_DATE)
+    payments = reconstruct_payments(events, START_DATE, END_DATE)
+    print_payments_csv(payments)
 
 
 if __name__ == '__main__':
