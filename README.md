@@ -18,6 +18,10 @@ inaccuracies to arise. [Let us know](mailto:vlad@vladh.net) if they do, and we'l
 Refunds are not documented in GitHub's API, so we weren't able to test those. Would you let us know if you run into any
 problems with refunds? They should be listed as payments with negative amounts on the export.
 
+Billing irregularities such as delayed credit card payments cannot be seen using the GitHub API. We can only see the
+schedule of what _should_ have been paid. However, the total amounts should eventually add up despite any delayed
+payments.
+
 ## Technical Notes
 
 GitHub's `totalSponsorshipAmountAsSponsorInCents` is broken and should not be used. This is because, if, in a particular
