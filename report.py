@@ -237,8 +237,12 @@ def reconstruct_payments(events, start_date, end_date):
             login = event['sponsorable']['login']
             match event['action']:
                 case 'NEW_SPONSORSHIP':
-                    monthly_price_in_cents = event['sponsorsTier']['monthlyPriceInCents']
-                    is_one_time = event['sponsorsTier']['isOneTime']
+                    # TODO: Why might an error arise here?
+                    try:
+                        monthly_price_in_cents = event['sponsorsTier']['monthlyPriceInCents']
+                        is_one_time = event['sponsorsTier']['isOneTime']
+                    except TypeError:
+                        continue
                     payments.append(Payment(
                         date=formatted_day,
                         login=login,
