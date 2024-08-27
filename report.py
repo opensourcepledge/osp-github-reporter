@@ -167,6 +167,8 @@ def reconstruct_payments(events, start_date, end_date):
 
     def remove_sponsorship(login):
         nonlocal payment_monthday
+        if login not in payment_login_to_amount_map:
+            return
         del payment_login_to_amount_map[login]
         if len(payment_login_to_amount_map) == 0:
             payment_monthday = None
