@@ -4,7 +4,7 @@ This tool allows you to export all of your GitHub Sponsors payments in CSV forma
 
 Note that this tool _cannot_ access your GitHub billing data. Therefore, your payments are reconstructed from the list
 of users/organizations you have sponsored, and when you started sponsoring each one. This means it's possible for
-inaccuracies to arise. [Let us know](mailto:vlad@vladh.net) if they do, and we'll fix them!
+inaccuracies to arise. [Let us know](mailto:vlad@vlad.website) if they do, and we'll fix them!
 
 ## Usage
 
